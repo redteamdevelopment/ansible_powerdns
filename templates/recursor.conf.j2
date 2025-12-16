@@ -1,0 +1,42 @@
+local-address=0.0.0.0
+local-port=53
+
+# DO 那个坑：必须 0.0.0.0/0，外面才能打进来；再用云防火墙做源限制
+allow-from={{ pdns_allow_from }}
+
+threads={{ pdns_threads }}
+processes=1
+
+# Enable SO_REUSEPORT for better multi-core performance
+reuseport=yes
+
+max-cache-entries=2000000
+max-packetcache-entries=500000
+packetcache-servfail-ttl=0
+
+########################################
+# 差异化转发
+########################################
+forward-zones-recurse=cn.=114.114.114.114;223.5.5.5;223.6.6.6;119.29.29.29;180.76.76.76
+forward-zones-recurse+=us.=8.8.8.8;8.8.4.4;9.9.9.9
+forward-zones-recurse+=.=1.1.1.1;1.0.0.1;8.8.8.8;9.9.9.9;8.8.4.4
+
+########################################
+# Lua 域名劫持
+########################################
+lua-dns-script=/etc/powerdns/override.lua
+
+########################################
+# Web API
+########################################
+webserver=yes
+webserver-address=0.0.0.0
+webserver-port=8082
+api-key={{ pdns_api_key }}
+
+########################################
+# 根提示
+########################################
+hint-file=/usr/share/dns/root.hints
+
+quiet=yes

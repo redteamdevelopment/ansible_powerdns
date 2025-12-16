@@ -1,0 +1,240 @@
+---
+- name: Deploy PowerDNS Recursor cluster
+  hosts: dns_servers
+  become: yes
+  vars:
+    pdns_allow_from: "0.0.0.0/0"  # Allow from anywhere for DigitalOcean compatibility; restrict via cloud firewall
+    pdns_threads: 2
+    pdns_api_key: "50GQacjn5x0NUTC3U7SDwV1PUpt5JERRJf2Eb346pOc="  # Generated secure random key
+  tasks:
+    # Check system version before proceeding
+    - name: Verify Debian 12 is installed
+      assert:
+        that:
+          - ansible_distribution == "Debian"
+          - ansible_distribution_major_version == "12"
+        fail_msg: "This playbook requires Debian 12. Current system: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+        success_msg: "System check passed: Debian {{ ansible_distribution_version }}"
+
+    # Disable systemd-resolved to free port 53
+    - name: Check if systemd-resolved is active
+      systemd:
+        name: systemd-resolved
+      register: resolved_status
+      ignore_errors: yes
+
+    - name: Backup original resolv.conf if it exists
+      copy:
+        src: /etc/resolv.conf
+        dest: /etc/resolv.conf.backup
+        remote_src: yes
+      when: resolved_status is defined
+      ignore_errors: yes
+
+    - name: Disable and stop systemd-resolved to free port 53
+      systemd:
+        name: systemd-resolved
+        enabled: no
+        state: stopped
+      when: resolved_status.status.ActiveState is defined and resolved_status.status.ActiveState == "active"
+      register: resolved_disabled
+
+    - name: Configure resolv.conf to use external DNS servers
+      copy:
+        content: |
+          # Configured by Ansible for PowerDNS Recursor deployment
+          # Original backed up to /etc/resolv.conf.backup
+          nameserver 1.1.1.1
+          nameserver 8.8.8.8
+        dest: /etc/resolv.conf
+        owner: root
+        group: root
+        mode: "0644"
+      when: resolved_disabled.changed is defined and resolved_disabled.changed
+
+    - name: Log systemd-resolved status
+      debug:
+        msg: "systemd-resolved has been disabled and stopped. System now uses external DNS: 1.1.1.1, 8.8.8.8"
+      when: resolved_disabled.changed is defined and resolved_disabled.changed
+
+    # Update package cache and install required tools
+    - name: Update apt package cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install PowerDNS Recursor & diagnostic tools
+      apt:
+        name:
+          - pdns-recursor
+          - dnsutils        # Provides dig, nslookup for DNS testing
+          - curl            # For API testing
+          - jq              # JSON parsing for API responses
+          - tcpdump         # Network packet analysis
+        state: present
+
+    # Optimize network parameters for high-performance DNS
+    - name: Apply sysctl network optimizations
+      sysctl:
+        name: "{{ item.key }}"
+        value: "{{ item.value }}"
+        state: present
+        reload: yes
+        sysctl_set: yes
+      loop:
+        - { key: 'net.core.rmem_max', value: '26214400' }
+        - { key: 'net.core.wmem_max', value: '26214400' }
+        - { key: 'net.core.rmem_default', value: '26214400' }
+        - { key: 'net.core.wmem_default', value: '26214400' }
+        - { key: 'net.ipv4.ip_local_port_range', value: '1024 65535' }
+
+    - name: Make sysctl optimizations persistent
+      blockinfile:
+        path: /etc/sysctl.conf
+        block: |
+          # PowerDNS Recursor network optimizations
+          net.core.rmem_max=26214400
+          net.core.wmem_max=26214400
+          net.core.rmem_default=26214400
+          net.core.wmem_default=26214400
+          net.ipv4.ip_local_port_range=1024 65535
+        marker: "# {mark} ANSIBLE MANAGED BLOCK - PowerDNS"
+        create: yes
+
+    # Increase file descriptor limit for pdns-recursor service
+    - name: Create systemd override directory for pdns-recursor
+      file:
+        path: /etc/systemd/system/pdns-recursor.service.d
+        state: directory
+        mode: "0755"
+
+    - name: Set file descriptor limit for pdns-recursor service
+      copy:
+        content: |
+          [Service]
+          LimitNOFILE=1000000
+        dest: /etc/systemd/system/pdns-recursor.service.d/limits.conf
+        owner: root
+        group: root
+        mode: "0644"
+      register: systemd_override
+
+    - name: Reload systemd daemon if override changed
+      systemd:
+        daemon_reexec: yes
+      when: systemd_override.changed
+
+    - name: Ensure config directory exists
+      file:
+        path: /etc/powerdns
+        state: directory
+        mode: "0755"
+
+    - name: Deploy recursor.conf
+      template:
+        src: recursor.conf.j2
+        dest: /etc/powerdns/recursor.conf
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart recursor
+
+    - name: Deploy Lua override script
+      template:
+        src: override.lua.j2
+        dest: /etc/powerdns/override.lua
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart recursor
+
+    - name: Enable and start pdns-recursor
+      systemd:
+        name: pdns-recursor
+        enabled: yes
+        state: started
+
+    # Ensure service is fully restarted to apply all configurations
+    - name: Force restart pdns-recursor to apply configuration changes
+      systemd:
+        name: pdns-recursor
+        state: restarted
+      register: service_restarted
+
+    - name: Wait for pdns-recursor to be fully ready
+      wait_for:
+        port: 53
+        host: 0.0.0.0
+        state: started
+        timeout: 30
+        delay: 2
+
+    # Post-deployment validation tasks
+    - name: Verify port 53 is listening on all interfaces
+      shell: ss -nlup | grep ':53'
+      register: port_check
+      changed_when: false
+      failed_when: "'0.0.0.0:53' not in port_check.stdout"
+
+    - name: Log port listening status
+      debug:
+        msg: "Port 53 status: {{ port_check.stdout_lines }}"
+
+    - name: Test Lua domain hijacking (s.360.cn should return 192.168.3.45)
+      shell: dig @127.0.0.1 s.360.cn +short +time=2 +tries=1
+      register: lua_test
+      changed_when: false
+      failed_when: "'192.168.3.45' not in lua_test.stdout"
+      ignore_errors: yes
+
+    - name: Log Lua hijacking test result
+      debug:
+        msg: "Lua hijacking test - s.360.cn resolved to: {{ lua_test.stdout_lines }}"
+
+    - name: Test default DNS forwarding (google.com)
+      shell: dig @127.0.0.1 google.com +short +time=3 +tries=1
+      register: forwarding_test
+      changed_when: false
+      failed_when: "forwarding_test.stdout == ''"
+      ignore_errors: yes
+
+    - name: Log default forwarding test result
+      debug:
+        msg: "Default forwarding test - google.com resolved to: {{ forwarding_test.stdout_lines }}"
+
+    - name: Test Web API endpoint
+      uri:
+        url: "http://127.0.0.1:8082/api/v1/servers/localhost/statistics"
+        method: GET
+        headers:
+          X-API-Key: "{{ pdns_api_key }}"
+        return_content: yes
+        status_code: 200
+      register: api_test
+      changed_when: false
+      ignore_errors: yes
+
+    - name: Log API test result
+      debug:
+        msg: "Web API is {{ 'accessible' if api_test.status == 200 else 'not accessible' }}"
+
+    - name: Display deployment summary
+      debug:
+        msg:
+          - "=== PowerDNS Recursor Deployment Summary ==="
+          - "Server: {{ ansible_hostname }} ({{ ansible_host }})"
+          - "OS: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+          - "Service Status: {{ 'Running' if service_restarted.changed else 'Already Running' }}"
+          - "Port 53: {{ 'Listening on 0.0.0.0' if '0.0.0.0:53' in port_check.stdout else 'Check Failed' }}"
+          - "Lua Hijacking: {{ 'Working' if '192.168.3.45' in lua_test.stdout else 'Failed' }}"
+          - "DNS Forwarding: {{ 'Working' if forwarding_test.stdout != '' else 'Failed' }}"
+          - "Web API: {{ 'Working' if api_test.status == 200 else 'Check Failed' }}"
+          - "API Key: {{ pdns_api_key }}"
+          - "Configuration: /etc/powerdns/recursor.conf"
+          - "Lua Script: /etc/powerdns/override.lua"
+
+  handlers:
+    - name: Restart recursor
+      systemd:
+        name: pdns-recursor
+        state: restarted

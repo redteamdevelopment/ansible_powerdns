@@ -1,0 +1,108 @@
+-- /etc/powerdns/override.lua
+
+local overrides = {
+    ["www.baidu.com."] = "10.0.0.8",
+    
+    -- Microsoft SmartScreen & Windows Defender & Updates
+    ["smartscreen.microsoft.com."] = "192.168.3.45",
+    ["checkappexec.smartscreen.microsoft.com."] = "192.168.3.45",
+    ["nav.smartscreen.microsoft.com."] = "192.168.3.45",
+    ["nav-edge.smartscreen.microsoft.com."] = "192.168.3.45",
+    ["urs.microsoft.com."] = "192.168.3.45",
+    ["urs.smartscreen.microsoft.com."] = "192.168.3.45",
+    ["smartscreen-prod.microsoft.com."] = "192.168.3.45",
+    ["endpoint.security.microsoft.com."] = "192.168.3.45",
+    ["securitycenter.windows.com."] = "192.168.3.45",
+    ["events.data.microsoft.com."] = "192.168.3.45",
+    ["definitionupdates.microsoft.com."] = "192.168.3.45",
+    ["download.windowsupdate.com."] = "192.168.3.45",
+    ["windowsupdate.com."] = "192.168.3.45",
+    ["update.microsoft.com."] = "192.168.3.45",
+    ["ctldl.windowsupdate.com."] = "192.168.3.45",
+    ["checkappexec.microsoft.com."] = "192.168.3.45",
+    
+    -- 360 Security
+    ["tconf.f.360.cn."] = "192.168.3.45",
+    ["uconf.f.360.cn."] = "192.168.3.45",
+    ["qup.f.360.cn."] = "192.168.3.45",
+    ["bp.conf.f.360.cn."] = "192.168.3.45",
+    ["sconf.f.360.cn."] = "192.168.3.45",
+    ["pre.vd.f.360.cn."] = "192.168.3.45",
+    ["es.f.360.cn."] = "192.168.3.45",
+    ["s.f.360.cn."] = "192.168.3.45",
+    ["i.360safe.com."] = "192.168.3.45",
+    ["down.360safe.com."] = "192.168.3.45",
+    ["update.360safe.com."] = "192.168.3.45",
+    ["updatem.360safe.com."] = "192.168.3.45",
+    ["dl.360safe.com."] = "192.168.3.45",
+    ["sdl.360safe.com."] = "192.168.3.45",
+    ["src.dl.360safe.com."] = "192.168.3.45",
+    ["dlleak.360safe.com."] = "192.168.3.45",
+    ["ini.update.360safe.com."] = "192.168.3.45",
+    ["softm.update.360safe.com."] = "192.168.3.45",
+    ["admin.online.360.cn."] = "192.168.3.45",
+    ["api.online.360.cn."] = "192.168.3.45",
+    ["s.360.cn."] = "192.168.3.45",
+    ["sdup.360.cn."] = "192.168.3.45",
+    ["pinst.360.cn."] = "192.168.3.45",
+    ["wsus.f.360.cn."] = "192.168.3.45",
+    ["vconf.f.360.cn."] = "192.168.3.45",
+    ["vcheck.f.360.cn."] = "192.168.3.45",
+    ["msgsrv.f.360.cn."] = "192.168.3.45",
+    ["rd1.online.360.cn."] = "192.168.3.45",
+    ["rd2.online.360.cn."] = "192.168.3.45",
+    ["rd3.online.360.cn."] = "192.168.3.45",
+    ["sdupm.qihucdn.com."] = "192.168.3.45",
+    ["inisdupm.qihucdn.com."] = "192.168.3.45",
+    ["s.ssl.qhres2.com."] = "192.168.3.45",
+    ["app.sc.360.net."] = "192.168.3.45",
+    
+    -- Bitdefender
+    ["dns.bitdefender.net."] = "192.168.3.45",
+    ["fra-dns.bitdefender.net."] = "192.168.3.45",
+    ["tky-dns.bitdefender.net."] = "192.168.3.45",
+    ["ore-dns.bitdefender.net."] = "192.168.3.45",
+    ["iow-dns.bitdefender.net."] = "192.168.3.45",
+    ["nvi-dns.bitdefender.net."] = "192.168.3.45",
+    ["push.bitdefender.net."] = "192.168.3.45",
+    ["bitdefender.com."] = "192.168.3.45",
+    ["www.bitdefender.com."] = "192.168.3.45",
+    ["gravityzone.bitdefender.com."] = "192.168.3.45",
+    ["lv2.bitdefender.com."] = "192.168.3.45",
+    ["download.bitdefender.com."] = "192.168.3.45",
+    ["upgrade.bitdefender.com."] = "192.168.3.45",
+    ["update.cloud.2d585.cdn.bitdefender.net."] = "192.168.3.45",
+    ["update-onprem.2d585.cdn.bitdefender.net."] = "192.168.3.45",
+    ["update-solarwinds.2d585.cdn.bitdefender.net."] = "192.168.3.45",
+    ["patches-please-change-me.cdn.bitdefender.net."] = "192.168.3.45",
+    ["upgr-mmxvii-cl-ts.2d8cd.cdn.bitdefender.net."] = "192.168.3.45",
+    ["upgr-mmxviii-avfm.2d8cd.cdn.bitdefender.net."] = "192.168.3.45",
+    ["upgr-mmxxiii-cl-ts-p.2d8cd.cdn.bitdefender.net."] = "192.168.3.45",
+    ["upgr-mmxxiii-cl-ts.2d8cd.cdn.bitdefender.net."] = "192.168.3.45",
+    ["nimbus.bitdefender.net."] = "192.168.3.45",
+    ["catch-nimbus.bitdefender.net."] = "192.168.3.45",
+}
+
+-- IPv6 address for internal network
+local ipv6_override = "::ffff:192.168.3.45"  -- IPv4-mapped IPv6 address
+
+function preresolve(dq)
+    local qname = dq.qname:toString():lower()
+    local ip = overrides[qname]
+
+    -- Handle A record (IPv4) hijacking
+    if ip and dq.qtype == pdns.A then
+        dq:addAnswer(pdns.A, ip)
+        dq.rcode = 0
+        return true
+    end
+
+    -- Handle AAAA record (IPv6) hijacking
+    if ip and dq.qtype == pdns.AAAA then
+        dq:addAnswer(pdns.AAAA, ipv6_override)
+        dq.rcode = 0
+        return true
+    end
+
+    return false
+end
