@@ -1,8 +1,8 @@
 # PowerDNS Recursor 自动化部署项目
 
 [![Ansible](https://img.shields.io/badge/Ansible-2.20+-green.svg)](https://www.ansible.com/)
-[![Debian](https://img.shields.io/badge/Debian-12-blue.svg)](https://www.debian.org/)
-[![PowerDNS](https://img.shields.io/badge/PowerDNS-4.8.8-orange.svg)](https://www.powerdns.com/)
+[![Debian](https://img.shields.io/badge/Debian-12%20|%2013-blue.svg)](https://www.debian.org/)
+[![PowerDNS](https://img.shields.io/badge/PowerDNS-4.8%20|%205.x-orange.svg)](https://www.powerdns.com/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 > **使用 Ansible 自动化部署 PowerDNS Recursor 集群，支持差异化 DNS 转发、Lua 域名劫持、Web API 监控和多云架构**
@@ -41,7 +41,7 @@ scutil --dns
 
 ## 项目概述
 
-本项目提供了一套完整的 Ansible 自动化方案，用于在多台 Debian 12 服务器上快速部署 PowerDNS Recursor DNS 递归解析服务。
+本项目提供了一套完整的 Ansible 自动化方案，用于在多台 Debian 12/13 服务器上快速部署 PowerDNS Recursor DNS 递归解析服务。
 
 ### 适用场景
 
@@ -101,12 +101,23 @@ scutil --dns
 
 | 组件 | 要求 |
 |------|------|
-| **操作系统** | Debian 12 (Bookworm) |
+| **操作系统** | Debian 12 (Bookworm) 或 Debian 13 (Trixie) |
+| **PowerDNS** | 4.8.x (Debian 12) 或 5.x (Debian 13) - 自动适配 |
 | **CPU** | 1 核心（推荐 2 核心+） |
 | **内存** | 512MB（推荐 1GB+） |
 | **硬盘** | 5GB 可用空间 |
 | **网络** | 公网 IP，UDP/TCP 53 端口可访问 |
 | **权限** | root 或具有 sudo 权限的用户 |
+
+### 支持的云平台
+
+| 平台 | 认证方式 | 默认用户 |
+|------|---------|---------|
+| **DigitalOcean** | 密码 | root |
+| **Vultr** | 密码 | root |
+| **AWS EC2** | SSH 密钥 (.pem) | admin / ubuntu / ec2-user |
+| **Azure** | SSH 密钥 | azureuser |
+| **GCP** | SSH 密钥 | 自定义 |
 
 ### 网络要求
 
@@ -149,6 +160,8 @@ ansible --version
 
 编辑 `inventory.ini` 文件，添加你的服务器信息：
 
+#### 方式一：密码登录（适用于 DigitalOcean, Vultr 等）
+
 ```ini
 [dns_servers]
 recursor1 ansible_host=152.42.186.194 ansible_ssh_pass=your_password
@@ -160,6 +173,51 @@ ansible_user=root
 ansible_python_interpreter=/usr/bin/python3
 ansible_ssh_common_args='-o StrictHostKeyChecking=no'
 ```
+
+#### 方式二：SSH 密钥登录（适用于 AWS EC2 等）
+
+AWS EC2 默认禁止 root 登录，需要使用密钥文件认证：
+
+```ini
+[dns_servers]
+# AWS EC2 服务器 - 使用密钥登录
+aws_dns1 ansible_host=18.143.190.240 ansible_user=admin ansible_ssh_private_key_file=~/.ssh/dns2.pem
+aws_dns2 ansible_host=13.250.123.45 ansible_user=admin ansible_ssh_private_key_file=~/.ssh/dns2.pem
+
+[dns_servers:vars]
+ansible_python_interpreter=/usr/bin/python3
+ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+```
+
+> **AWS EC2 常见用户名:**
+> - Debian/Ubuntu AMI: `admin` 或 `ubuntu`
+> - Amazon Linux AMI: `ec2-user`
+> - CentOS/RHEL AMI: `centos` 或 `ec2-user`
+
+> **密钥文件权限:** 确保 `.pem` 文件权限正确：
+> ```bash
+> chmod 400 ~/.ssh/dns2.pem
+> ```
+
+#### 方式三：混合配置（同时管理不同云服务商）
+
+```ini
+[dns_servers]
+# DigitalOcean - 密码登录
+do_dns1 ansible_host=165.22.57.149 ansible_user=root ansible_ssh_pass=your_password
+
+# AWS EC2 - 密钥登录 (需要 ansible_become=yes 进行 sudo 提权)
+aws_dns1 ansible_host=18.143.190.240 ansible_user=admin ansible_ssh_private_key_file=~/.ssh/dns2.pem ansible_become=yes
+
+[dns_servers:vars]
+ansible_python_interpreter=/usr/bin/python3
+ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+```
+
+> **AWS EC2 说明**: 
+> - AWS 默认禁止 root 登录，使用 `admin` 用户 + 密钥认证
+> - `ansible_become=yes` 相当于登录后执行 `sudo su root`
+> - 确保密钥文件权限正确: `chmod 400 ~/.ssh/dns2.pem`
 
 > **安全提示**: 生产环境推荐使用 SSH 密钥认证替代密码，删除 `ansible_ssh_pass` 配置。
 
@@ -175,14 +233,15 @@ ansible-playbook -i inventory.ini playbook.yml
 
 ```bash
 # 测试 DNS 查询
-dig @152.42.186.194 google.com
+dig @YOUR_SERVER_IP google.com
 
-# 测试 Lua 劫持
-dig @152.42.186.194 www.baidu.com
-# 期望返回: 10.0.0.8
+# 测试 Lua 劫持 (360安全软件域名)
+dig @YOUR_SERVER_IP s.360.cn
+# 期望返回: 192.168.3.45
 
 # 测试 Web API（从服务器执行）
-ssh root@152.42.186.194
+ssh admin@YOUR_SERVER_IP  # AWS
+ssh root@YOUR_SERVER_IP   # DigitalOcean
 curl -H "X-API-Key: YOUR_API_KEY" http://127.0.0.1:8082/api/v1/servers/localhost/statistics
 ```
 
@@ -1396,6 +1455,18 @@ SOFTWARE.
 
 ## 更新日志
 
+### v1.1.0 (2025-12-16)
+
+**新增 AWS 支持和 Debian 13 兼容**
+
+- ✅ **AWS EC2 密钥登录支持**: 支持使用 `.pem` 密钥文件认证
+- ✅ **sudo 提权**: 自动处理 AWS EC2 的 admin 用户 sudo 提权
+- ✅ **Debian 13 支持**: 兼容 Debian 13 (Trixie) 和 PowerDNS Recursor 5.x
+- ✅ **PowerDNS 5.x 兼容**: 自动启用 `--enable-old-settings` 参数
+- ✅ **多云混合部署**: 支持同时管理 DigitalOcean、AWS、Vultr 等不同云服务商
+- ✅ **inventory.ini 增强**: 添加详细注释和多种配置示例
+- 🔧 清理测试用的域名劫持条目
+
 ### v1.0.0 (2025-12-14)
 
 **初始版本发布**
@@ -1411,5 +1482,5 @@ SOFTWARE.
 ---
 
 **项目维护者**: GitHub Copilot & Community Contributors  
-**最后更新**: 2025-12-14  
-**文档版本**: 1.0.0
+**最后更新**: 2025-12-16  
+**文档版本**: 1.1.0

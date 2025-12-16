@@ -8,12 +8,12 @@
     pdns_api_key: "50GQacjn5x0NUTC3U7SDwV1PUpt5JERRJf2Eb346pOc="  # Generated secure random key
   tasks:
     # Check system version before proceeding
-    - name: Verify Debian 12 is installed
+    - name: Verify Debian 12 or 13 is installed
       assert:
         that:
           - ansible_distribution == "Debian"
-          - ansible_distribution_major_version == "12"
-        fail_msg: "This playbook requires Debian 12. Current system: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+          - ansible_distribution_major_version in ["12", "13"]
+        fail_msg: "This playbook requires Debian 12 or 13. Current system: {{ ansible_distribution }} {{ ansible_distribution_version }}"
         success_msg: "System check passed: Debian {{ ansible_distribution_version }}"
 
     # Disable systemd-resolved to free port 53
@@ -119,10 +119,24 @@
         mode: "0644"
       register: systemd_override
 
+    # For PowerDNS Recursor 5.x (Debian 13+), enable old-style config format
+    - name: Enable old-style config for PowerDNS 5.x (Debian 13+)
+      copy:
+        content: |
+          [Service]
+          ExecStart=
+          ExecStart=/usr/sbin/pdns_recursor --daemon=no --write-pid=no --disable-syslog --log-timestamp=no --enable-old-settings
+        dest: /etc/systemd/system/pdns-recursor.service.d/old-settings.conf
+        owner: root
+        group: root
+        mode: "0644"
+      when: ansible_distribution_major_version == "13"
+      register: old_settings_override
+
     - name: Reload systemd daemon if override changed
       systemd:
         daemon_reexec: yes
-      when: systemd_override.changed
+      when: systemd_override.changed or (old_settings_override.changed is defined and old_settings_override.changed)
 
     - name: Ensure config directory exists
       file:
